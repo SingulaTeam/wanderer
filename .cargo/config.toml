@@ -1,0 +1,4 @@
+[build]
+# Each rustc on the SDK's dependency tree can take a gigabyte or more; all
+# cores at once run a 16 GB machine out of memory.
+jobs = 4

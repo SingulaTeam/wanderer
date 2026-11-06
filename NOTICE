@@ -1,0 +1,28 @@
+Wanderer is licensed under the Mozilla Public License 2.0 (LICENSE).
+
+Its packages also carry the following third-party software, each under its
+own license.
+
+Xray-core
+    The tunnel engine, shipped as a binary in the desktop packages and built
+    into the Android app from android/xray. Fetched by scripts/fetch-xray.sh,
+    pinned by digest.
+    https://github.com/XTLS/Xray-core — Mozilla Public License 2.0.
+
+Wintun
+    The TUN driver Xray uses on Windows (wintun.dll), shipped in the Windows
+    installer. https://www.wintun.net — © WireGuard LLC, distributed under
+    the license that accompanies its prebuilt binaries.
+
+Tauri
+    The application shell. https://tauri.app — MIT or Apache-2.0.
+
+Inter and Orbitron
+    The interface fonts, through @fontsource. SIL Open Font License 1.1.
+
+flag-icons
+    The country flags. https://github.com/lipis/flag-icons — MIT.
+
+The Rust and npm dependencies are listed in Cargo.lock and
+app/package-lock.json; `cargo deny check licenses` verifies that every Rust
+dependency's license allows Wanderer's.

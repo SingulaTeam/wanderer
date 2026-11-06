@@ -1,0 +1,210 @@
+name: Release
+
+# A tag v<version> builds every package and publishes them as a GitHub release.
+# The version must be the app's (app/src-tauri/tauri.conf.json); a tag with a
+# suffix — v0.4.5-rc1 — makes a prerelease, which the websites, reading the
+# latest release, do not offer.
+#
+# The packages are built by the same scripts as on a developer's machine,
+# except for Windows, which builds natively here rather than across from Linux.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   THIRDWEB_CLIENT_ID          sign-in; built into the app
+#   ANDROID_KEYSTORE_BASE64     the release key's keystore, base64
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  VITE_THIRDWEB_CLIENT_ID: ${{ secrets.THIRDWEB_CLIENT_ID }}
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: The tag names the app's version
+        run: |
+          version="$(jq -r .version app/src-tauri/tauri.conf.json)"
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            "v$version") prerelease=false ;;
+            "v$version"-*) prerelease=true ;;
+            *) echo "Tag $tag does not name version $version." >&2; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+      - name: The secrets a release needs are set
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          missing=()
+          [[ -n "$VITE_THIRDWEB_CLIENT_ID" ]] || missing+=(THIRDWEB_CLIENT_ID)
+          [[ -n "$KEYSTORE" ]] || missing+=(ANDROID_KEYSTORE_BASE64)
+          if (( ${#missing[@]} )); then
+            echo "Missing secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+  linux:
+    name: Linux (.deb)
+    needs: version
+    # The oldest supported Ubuntu: a package built against an older glibc
+    # installs on newer systems, not the other way round.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      # Where the build scripts put the packages (see scripts/release.sh).
+      - run: echo "WANDERER_RELEASES=$RUNNER_TEMP/releases" >> "$GITHUB_ENV"
+      - name: Tauri's system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: ${{ runner.temp }}/releases/*/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows (installer)
+    needs: version
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # As scripts/build-windows.sh does from Linux: the daemon, Xray and
+      # Wintun, laid where tauri.windows.conf.json bundles them from.
+      - run: scripts/fetch-xray.sh windows
+      - run: cargo build --release -p wanderer-daemon
+      - name: Bundled binaries, named for their target
+        run: |
+          mkdir -p target/windows-bin
+          cp target/release/wandererd.exe target/windows-bin/wandererd-x86_64-pc-windows-msvc.exe
+          cp target/xray-windows/xray.exe target/windows-bin/xray-x86_64-pc-windows-msvc.exe
+      - run: npm ci && npx tauri build --bundles nsis
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: target/release/bundle/nsis/Wanderer_${{ needs.version.outputs.version }}_x64-setup.exe
+          if-no-files-found: error
+
+  android:
+    name: Android (APKs)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Where the build scripts put the packages (see scripts/release.sh).
+      - run: echo "WANDERER_RELEASES=$RUNNER_TEMP/releases" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: android/xray/go.mod
+          cache-dependency-path: android/xray/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+        working-directory: app
+      # The release key, from the secrets, outside the repository; the build
+      # script signs every APK with it and checks each one before publishing.
+      - name: The release key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          keystore="$RUNNER_TEMP/release.jks"
+          base64 --decode > "$keystore" <<<"$KEYSTORE"
+          {
+            echo "storeFile=$keystore"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > app/src-tauri/gen/android/keystore.properties
+      - run: scripts/build-android.sh
+      - name: Remove the release key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks" app/src-tauri/gen/android/keystore.properties
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: ${{ runner.temp }}/releases/*/*.apk
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [version, linux, windows, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Release notes from the changelog
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # The section under "## [<version>]", up to the next "## ".
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          [[ -s notes.md ]] || echo "Wanderer $VERSION." > notes.md
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          flags=()
+          [[ "$PRERELEASE" = true ]] && flags+=(--prerelease)
+          ls -la packages
+          gh release create "$GITHUB_REF_NAME" packages/* \
+            --title "Wanderer $VERSION" --notes-file notes.md "${flags[@]}"

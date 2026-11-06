@@ -1,0 +1,21 @@
+name: Feature request
+description: Something Wanderer should do and does not.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you are trying to do
+      description: The problem, from your side. What would you do with this?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: How it could look or work, if you have an idea. Sketches are welcome.
+  - type: textarea
+    id: around
+    attributes:
+      label: What you do today instead
+      description: A workaround, another app, or nothing.

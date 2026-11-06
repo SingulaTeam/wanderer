@@ -1,0 +1,17 @@
+{
+	"$schema": "../gen/schemas/desktop-schema.json",
+	"identifier": "oauth-popup",
+	"description": "The Google/Apple sign-in window. Its pages are remote; they may only emit the event that carries the sign-in result back to the main window.",
+	"windows": ["oauth_popup"],
+	"remote": {
+		"urls": [
+			"https://*.thirdweb.com/**",
+			"https://thirdweb.com/**",
+			"https://accounts.google.com/**",
+			"https://*.google.com/**",
+			"https://appleid.apple.com/**",
+			"https://*.apple.com/**"
+		]
+	},
+	"permissions": ["core:event:allow-emit"]
+}

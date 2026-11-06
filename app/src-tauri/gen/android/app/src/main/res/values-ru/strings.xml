@@ -1,0 +1,5 @@
+<resources>
+    <string name="vpn_channel">"Подключение"</string>
+    <string name="vpn_up">"Защищено"</string>
+    <string name="vpn_holding">"Переподключение — пока ничего не уходит с устройства"</string>
+</resources>

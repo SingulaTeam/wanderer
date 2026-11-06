@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = ["crates/tunnel", "crates/daemon", "crates/core", "app/src-tauri"]
+
+[workspace.package]
+version = "0.4.4"
+edition = "2024"
+rust-version = "1.87"
+publish = false
+license = "MPL-2.0"
+repository = "https://github.com/SingulaTeam/wanderer"
+homepage = "https://wanderer.singula.network"
+
+[workspace.dependencies]
+wanderer-tunnel = { path = "crates/tunnel" }
+wanderer-core = { path = "crates/core" }
+singula = { git = "https://github.com/SingulaTeam/rust-sdk", tag = "v0.1.0", features = ["client", "http"] }
+# To work against a local checkout of the SDK, uncomment this and keep the
+# line above unchanged:
+#
+# [patch."https://github.com/SingulaTeam/rust-sdk"]
+# singula = { path = "../rust-sdk" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net", "process", "signal", "sync", "time", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+# Denied, not forbidden: the Windows daemon calls the system through FFI in
+# one module that allows it, and says why.
+unsafe_code = "deny"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+todo = "deny"
+
+# Dependencies without debug info, and ours with line tables only: full
+# debug info across the SDK's proving crates takes more memory to build than
+# a laptop running an editor and a browser has to spare.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

@@ -1,0 +1,68 @@
+# cargo-deny: what may be depended on, and from where.
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+# Every RustSec advisory fails the build; an exception needs an entry here
+# with the reason it does not apply to Wanderer.
+ignore = [
+    # RSA private-key timing (Marvin), in `rsa` via the SDK's
+    # blind-rsa-signatures. The client only blinds, unblinds and verifies —
+    # public-key operations; the private key is the issuer's and never in
+    # this process.
+    { id = "RUSTSEC-2023-0071", reason = "public-key operations only" },
+    # ANSI injection in tracing-subscriber 0.2, pulled in by arkworks'
+    # ark-relations through the SDK. Wanderer's own subscriber is 0.3, and
+    # nothing installs a 0.2 subscriber.
+    { id = "RUSTSEC-2025-0055", reason = "the 0.2 subscriber is never installed" },
+    # Unmaintained, not vulnerable, with no maintained successor in the
+    # releases of the crates that pull them in.
+    { id = "RUSTSEC-2024-0388", reason = "derivative: via the SDK's arkworks, unmaintained only" },
+    { id = "RUSTSEC-2024-0436", reason = "paste: via the SDK's arkworks and alloy, unmaintained only" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: via gtk-rs in Tauri's Linux tray, a build-time macro, unmaintained only" },
+    # Unicode tables under urlpattern, which tauri-utils uses to match the
+    # capabilities' URLs: unmaintained, and not replaced in Tauri 2.
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range: via urlpattern in tauri-utils, unmaintained only" },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common: via urlpattern in tauri-utils, unmaintained only" },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property: via urlpattern in tauri-utils, unmaintained only" },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version: via urlpattern in tauri-utils, unmaintained only" },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident: via urlpattern in tauri-utils, unmaintained only" },
+    # The D-Bus stack tauri-plugin-single-instance uses on Linux; its latest
+    # stable release still depends on zbus 5.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: via zbus in tauri-plugin-single-instance, unmaintained only" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: via zbus in tauri-plugin-single-instance, unmaintained only" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: via zbus in tauri-plugin-single-instance, unmaintained only" },
+]
+
+[licenses]
+# Wanderer is MPL-2.0. Its dependencies must allow that: permissive licenses,
+# and MPL-2.0 itself.
+allow = [
+    "MPL-2.0",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# The workspace's own crates, which depend on each other by path.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The Singula SDK, until it is on crates.io.
+allow-git = ["https://github.com/SingulaTeam/rust-sdk"]

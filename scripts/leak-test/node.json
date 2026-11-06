@@ -1,0 +1,69 @@
+{
+ "log": {
+  "loglevel": "warning",
+  "access": "none"
+ },
+ "inbounds": [
+  {
+   "tag": "vision",
+   "listen": "203.0.113.1",
+   "port": 443,
+   "protocol": "vless",
+   "settings": {
+    "clients": [
+     {
+      "id": "7316e3b4-53eb-41da-90d9-23bbde8e1cc6",
+      "flow": "xtls-rprx-vision"
+     }
+    ],
+    "decryption": "none",
+    "fallbacks": [
+     {
+      "dest": "@wanderer-test-xhttp",
+      "xver": 0
+     }
+    ]
+   },
+   "streamSettings": {
+    "network": "raw",
+    "security": "reality",
+    "realitySettings": {
+     "dest": "93.184.215.14:8443",
+     "serverNames": [
+      "www.example.com"
+     ],
+     "privateKey": "kABF3KIeph4FyxTlpxs79cbDKBLxZoNy1EaUIzSei3c",
+     "shortIds": [
+      "a1b2c3d4"
+     ]
+    }
+   }
+  },
+  {
+   "tag": "xhttp",
+   "listen": "@wanderer-test-xhttp",
+   "protocol": "vless",
+   "settings": {
+    "clients": [
+     {
+      "id": "7316e3b4-53eb-41da-90d9-23bbde8e1cc6",
+      "flow": ""
+     }
+    ],
+    "decryption": "none"
+   },
+   "streamSettings": {
+    "network": "xhttp",
+    "security": "none",
+    "xhttpSettings": {
+     "path": "/api/v1/session/heartbeat"
+    }
+   }
+  }
+ ],
+ "outbounds": [
+  {
+   "protocol": "freedom"
+  }
+ ]
+}

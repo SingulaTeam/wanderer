@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in Wanderer does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem does not go here. Report it privately, as SECURITY.md describes.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The steps that show it, from a fresh start if you can.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        The app's log, or the daemon's output (`journalctl -u wandererd` on Linux).
+        Leave out your wallet address and anything else you would rather not publish.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: 0.4.4
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: Windows 11 / Ubuntu 24.04 / Android 15, Pixel 8 / …
+    validations:
+      required: true
+  - type: input
+    id: network
+    attributes:
+      label: Network
+      description: The country you connect from, and anything unusual about the network (a filter, a captive portal, IPv6 only).

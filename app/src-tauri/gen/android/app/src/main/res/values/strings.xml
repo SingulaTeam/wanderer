@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">"Wanderer"</string>
+    <string name="main_activity_title">"Wanderer"</string>
+    <string name="vpn_channel">"Connection"</string>
+    <string name="vpn_up">"Protected"</string>
+    <string name="vpn_holding">"Reconnecting — nothing leaves the device meanwhile"</string>
+</resources>

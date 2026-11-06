@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+# The app crate embeds the built UI, so every job that compiles it builds the
+# UI first. Sign-in needs a thirdweb client ID; CI builds without one.
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  ui:
+    name: UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vite build
+
+  linux:
+    name: Clippy and tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tauri's system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci && npx vite build
+        working-directory: app
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Tests that need a real Xray or the live network are ignored here.
+      - run: cargo test --workspace
+
+  windows:
+    name: Clippy (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci && npx vite build
+        working-directory: app
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # tauri.windows.conf.json bundles the daemon, Xray and Wintun, and the
+      # build script checks they exist. Checking the code needs none of them:
+      # empty stand-ins, where scripts/build-windows.sh puts the real ones.
+      - name: Stand-ins for the bundled binaries
+        shell: bash
+        run: |
+          mkdir -p target/windows-bin target/xray-windows
+          touch target/windows-bin/wandererd-x86_64-pc-windows-msvc.exe
+          touch target/windows-bin/xray-x86_64-pc-windows-msvc.exe
+          touch target/xray-windows/wintun.dll
+      # The daemon's Windows half: the service, the named pipe, WFP.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  android:
+    name: Clippy (Android)
+    runs-on: ubuntu-latest
+    env:
+      TARGET: aarch64-linux-android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci && npx vite build
+        working-directory: app
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      # The runner ships an NDK; C dependencies compile with its clang.
+      - name: The NDK's toolchain
+        run: |
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CC_aarch64_linux_android=$bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$bin/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+      # The app's Android half: the VPN plugin and the engine that drives it.
+      - run: cargo clippy --target "$TARGET" -p wanderer-app --lib -- -D warnings
+
+  msrv:
+    name: Minimum Rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tauri's system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci && npx vite build
+        working-directory: app
+      - uses: dtolnay/rust-toolchain@1.87
+      # Cargo picks the newest versions this toolchain can build, as it would
+      # for someone building with it; the committed lockfile is for stable.
+      - run: cargo generate-lockfile
+      - run: cargo check --workspace
+
+  # Advisories come from the RustSec database, the same one cargo-audit reads;
+  # exceptions live in deny.toml, each with its reason.
+  deny:
+    name: Licenses, advisories, sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  # The one check a branch ruleset needs to require: it passes only when every
+  # job above did, so adding or renaming a job never means editing the rule.
+  # `always()` makes it run, and fail, even when a job it waits on failed or
+  # was cancelled; without it a skipped check would count as passing.
+  ci:
+    name: CI passed
+    if: always()
+    needs: [fmt, ui, linux, windows, android, msrv, deny]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "Results: ${{ toJSON(needs.*.result) }}"
+          exit 1
+      - run: echo "All checks passed."

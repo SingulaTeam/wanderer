@@ -1,0 +1,35 @@
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/orbitron/500.css';
+@import '@fontsource/orbitron/700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+	height: 100%;
+	margin: 0;
+	background: #0b0b0d;
+	color: #f4f4f5;
+	font-family: Inter, system-ui, sans-serif;
+	-webkit-font-smoothing: antialiased;
+	color-scheme: dark;
+}
+
+::selection {
+	background: rgba(254, 80, 1, 0.3);
+}
+
+/* Motion is decoration here; nothing is said by it alone. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation: none !important;
+		transition: none !important;
+	}
+}
