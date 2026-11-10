@@ -356,7 +356,11 @@ impl Core {
                         self.signed_out().await;
                         self.signed_in(address).await;
                         if was_on {
-                            self.connect().await.ok();
+                            // The tunnel was on before the switch: bring it
+                            // back, and say so if it does not come.
+                            if let Err(reason) = self.connect().await {
+                                tracing::warn!("could not reconnect after the switch: {reason}");
+                            }
                         }
                     }
                     tracing::info!("switched to the new contracts");

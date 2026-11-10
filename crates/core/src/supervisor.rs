@@ -1,7 +1,8 @@
 //! Keeping the tunnel up.
 //!
-//! The supervisor is one task that owns the [`Engine`] and the session. From "connect" until "disconnect" the guard holds: nothing
-//! leaves outside the tunnel, through every failure and reconnect in between.
+//! The supervisor is one task that owns the [`Engine`] and the session. From
+//! "connect" until "disconnect" the guard holds: nothing leaves outside the
+//! tunnel, through every failure and reconnect in between.
 //!
 //! ```text
 //! Disconnected ──connect──▶ Connecting ──▶ Connected

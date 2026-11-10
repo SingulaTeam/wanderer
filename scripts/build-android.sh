@@ -82,9 +82,16 @@ check() {
 		return 1
 	fi
 	[[ "$PROFILE" = release ]] || return 0
-	local cert
-	cert="$("$APKSIGNER" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
-	[[ "$cert" = "$EXPECTED" ]] || { echo "$apk: signed with $cert, not the release key $EXPECTED" >&2; return 1; }
+	# The line's prefix differs between build-tools releases ("Signer #1", or
+	# "Signer (minSdkVersion=…)" for a v3 signature); the digest does not.
+	local certs cert
+	certs="$("$APKSIGNER" verify --print-certs "$apk")"
+	cert="$(grep -m1 -oE 'certificate SHA-256 digest: [0-9a-f]{64}' <<<"$certs" | awk '{print $NF}')"
+	if [[ "$cert" != "$EXPECTED" ]]; then
+		echo "$apk: signed with ${cert:-an unreadable certificate}, not the release key $EXPECTED" >&2
+		echo "$certs" >&2
+		return 1
+	fi
 	if "$AAPT" dump xmltree "$apk" AndroidManifest.xml | grep -q 'android:debuggable.*0xffffffff'; then
 		echo "$apk: debuggable" >&2
 		return 1
