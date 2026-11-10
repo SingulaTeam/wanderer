@@ -6,7 +6,11 @@
 #   Wanderer_<version>_armv7.apk    older and low-end 32-bit phones
 #   Wanderer_<version>_x86_64.apk   emulators and Chromebooks
 #
-#   scripts/build-android.sh
+#   scripts/build-android.sh                 all three, one after another
+#   scripts/build-android.sh arm64 x86_64    only those
+#
+# CI builds each architecture in a job of its own, side by side; here they
+# go one at a time, since each is a full Rust build.
 #
 # Needs the environment in android-env.sh. Xray's AAR is built once, by
 # build-xray-aar.sh, and kept.
@@ -34,12 +38,23 @@ BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
 APKSIGNER="$BUILD_TOOLS/apksigner"
 AAPT="$BUILD_TOOLS/aapt"
 
-# Gradle flavor : ABI : the name in the file.
-ARCHES=(
-	"arm64:arm64-v8a:arm64"
-	"arm:armeabi-v7a:armv7"
-	"x86_64:x86_64:x86_64"
+# Gradle flavor : ABI : the name in the file : Tauri's target.
+ALL=(
+	"arm64:arm64-v8a:arm64:aarch64"
+	"arm:armeabi-v7a:armv7:armv7"
+	"x86_64:x86_64:x86_64:x86_64"
 )
+ARCHES=()
+for want in "${@:-arm64 armv7 x86_64}"; do
+	for w in $want; do
+		found=""
+		for entry in "${ALL[@]}"; do
+			IFS=: read -r _ _ name _ <<<"$entry"
+			[[ "$name" = "$w" ]] && { ARCHES+=("$entry"); found=1; }
+		done
+		[[ -n "$found" ]] || { echo "Unknown architecture $w: arm64, armv7 or x86_64." >&2; exit 2; }
+	done
+done
 
 if [[ -f "$ANDROID/keystore.properties" ]]; then
 	PROFILE=release
@@ -64,7 +79,8 @@ flag=(); [[ "$PROFILE" = debug ]] && flag=(--debug)
 # runs them outside the memory cap. So no daemon — Gradle and the cargo it
 # starts stay inside `capped` — and one target per build.
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.daemon=false"
-for target in aarch64 armv7 x86_64; do
+for entry in "${ARCHES[@]}"; do
+	IFS=: read -r _ _ _ target <<<"$entry"
 	capped npx tauri android build "${flag[@]}" --apk --split-per-abi --target "$target"
 done
 
@@ -100,7 +116,7 @@ check() {
 
 OUTS=()
 for entry in "${ARCHES[@]}"; do
-	IFS=: read -r flavor abi name <<<"$entry"
+	IFS=: read -r flavor abi name _ <<<"$entry"
 	apk="$ANDROID/app/build/outputs/apk/$flavor/$PROFILE/app-$flavor-$PROFILE.apk"
 	[[ -f "$apk" ]] || { echo "Missing $apk" >&2; exit 1; }
 	check "$apk" "$abi"

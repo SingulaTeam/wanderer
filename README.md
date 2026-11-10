@@ -58,7 +58,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 (cd app && npm ci && npx tsc --noEmit && npx vite build)
 cargo deny check
+XRAY_BIN=$PWD/target/xray/xray cargo test -p wanderer-tunnel -p wanderer-core -- --ignored
+XRAY=target/xray/xray scripts/leak-test/run.sh
 ```
+
+The last two need Xray (`scripts/fetch-xray.sh`), `nft`, and unprivileged user namespaces; one of the ignored tests also needs the network. A release is published only when all of these pass on the tagged commit.
 
 ### Packages
 
@@ -68,7 +72,7 @@ Each script puts what it builds in `../releases/wanderer/<version>/`, beside the
 |---|---|---|
 | Linux (`.deb`) | `scripts/build-deb.sh` | the Tauri prerequisites |
 | Windows (installer) | `scripts/build-windows.sh` | `cargo-xwin`, the `x86_64-pc-windows-msvc` target, `makensis`; builds from Linux |
-| Android (APKs for arm64, armv7, x86_64) | `scripts/build-android.sh` | Android SDK and NDK, JDK 17, Go; see `scripts/android-env.sh` |
+| Android (APKs for arm64, armv7, x86_64) | `scripts/build-android.sh [arm64] [armv7] [x86_64]` | Android SDK and NDK, JDK 17, Go; see `scripts/android-env.sh` |
 
 `scripts/fetch-xray.sh` downloads the Xray release Wanderer is tested with, checked against pinned digests. For Android, `scripts/build-xray-aar.sh` builds Xray once into the Android project.
 

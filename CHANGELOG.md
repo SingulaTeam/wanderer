@@ -6,6 +6,11 @@ All notable changes to Wanderer are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- CI runs the tests that need a real Xray and nftables, and the leak test;
+  a release is published only when every check passes on the tagged commit.
+
 ## [0.4.4] - 2026-11-06
 
 ### Changed

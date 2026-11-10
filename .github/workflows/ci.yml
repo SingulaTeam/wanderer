@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs these same checks on the tagged commit.
+  workflow_call:
 
 permissions:
   contents: read
@@ -64,8 +66,51 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      # Tests that need a real Xray or the live network are ignored here.
+      # Tests that need a real Xray or nftables are ignored here and run in
+      # the tunnel job below.
       - run: cargo test --workspace
+
+  # The tunnel for real: the tests that need Xray and nftables, and the leak
+  # test, which runs the daemon, Xray and the Network Guard against a node in
+  # network namespaces of its own and fails if anything leaves around the
+  # tunnel. That is the promise a VPN makes, so no release goes out without it.
+  tunnel:
+    name: Tunnel and leak test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # Ubuntu's AppArmor refuses unprivileged user namespaces by default; the
+      # tests make their own and need no root inside the job beyond this.
+      - name: Unprivileged user namespaces
+        run: |
+          f=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          [[ ! -e "$f" ]] || sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: nftables and dig
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables dnsutils
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/fetch-xray.sh
+      # chain_carries_traffic borrows a real site's REALITY handshake, so it
+      # needs the network as well as Xray.
+      - name: Tests with a real Xray and nftables
+        run: cargo test -p wanderer-tunnel -p wanderer-core -- --ignored
+        env:
+          XRAY_BIN: ${{ github.workspace }}/target/xray/xray
+      - run: echo "LEAK_TEST_LOGS=$RUNNER_TEMP/leak-test" >> "$GITHUB_ENV"
+      - name: The leak test
+        run: |
+          mkdir -p "$LEAK_TEST_LOGS"
+          XRAY=target/xray/xray scripts/leak-test/run.sh
+      - name: The leak test's logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: leak-test-logs
+          path: ${{ runner.temp }}/leak-test
+          if-no-files-found: ignore
 
   windows:
     name: Clippy (Windows)
@@ -164,7 +209,7 @@ jobs:
   ci:
     name: CI passed
     if: always()
-    needs: [fmt, ui, linux, windows, android, msrv, deny]
+    needs: [fmt, ui, linux, tunnel, windows, android, msrv, deny]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed

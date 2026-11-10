@@ -8,6 +8,9 @@ name: Release
 # The packages are built by the same scripts as on a developer's machine,
 # except for Windows, which builds natively here rather than across from Linux.
 #
+# Nothing is published unless every check in ci.yml passes on the tagged
+# commit, the leak test among them; the packages build meanwhile.
+#
 # Secrets (Settings → Secrets and variables → Actions):
 #   THIRDWEB_CLIENT_ID          sign-in; built into the app
 #   ANDROID_KEYSTORE_BASE64     the release key's keystore, base64
@@ -59,6 +62,11 @@ jobs:
             exit 1
           fi
 
+  checks:
+    name: Checks
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
   linux:
     name: Linux (.deb)
     needs: version
@@ -84,7 +92,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux
-          path: ${{ runner.temp }}/releases/*/*
+          # No wildcard before the file name: upload-artifact keeps every
+          # folder after the first one, and the release takes files only.
+          path: ${{ runner.temp }}/releases/${{ needs.version.outputs.version }}/*.deb
           if-no-files-found: error
 
   windows:
@@ -120,10 +130,22 @@ jobs:
           path: target/release/bundle/nsis/Wanderer_${{ needs.version.outputs.version }}_x64-setup.exe
           if-no-files-found: error
 
+  # One job per architecture, side by side: each is a full Rust and Gradle
+  # build, and one after another they took most of an hour.
   android:
-    name: Android (APKs)
+    name: Android (${{ matrix.arch }})
     needs: version
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: arm64
+            rust: aarch64-linux-android
+          - arch: armv7
+            rust: armv7-linux-androideabi
+          - arch: x86_64
+            rust: x86_64-linux-android
     steps:
       - uses: actions/checkout@v4
       # Where the build scripts put the packages (see scripts/release.sh).
@@ -143,8 +165,10 @@ jobs:
           cache-dependency-path: android/xray/go.sum
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          targets: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
       - run: npm ci
         working-directory: app
       # The release key, from the secrets, outside the repository; the build
@@ -164,19 +188,19 @@ jobs:
             echo "keyAlias=$KEY_ALIAS"
             echo "keyPassword=$KEY_PASSWORD"
           } > app/src-tauri/gen/android/keystore.properties
-      - run: scripts/build-android.sh
+      - run: scripts/build-android.sh ${{ matrix.arch }}
       - name: Remove the release key
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks" app/src-tauri/gen/android/keystore.properties
       - uses: actions/upload-artifact@v4
         with:
-          name: android
-          path: ${{ runner.temp }}/releases/*/*.apk
+          name: android-${{ matrix.arch }}
+          path: ${{ runner.temp }}/releases/${{ needs.version.outputs.version }}/*.apk
           if-no-files-found: error
 
   publish:
     name: Publish
-    needs: [version, linux, windows, android]
+    needs: [version, checks, linux, windows, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -205,6 +229,16 @@ jobs:
         run: |
           flags=()
           [[ "$PRERELEASE" = true ]] && flags+=(--prerelease)
-          ls -la packages
-          gh release create "$GITHUB_REF_NAME" packages/* \
+          # Every file the jobs uploaded, wherever in the tree it landed: one
+          # .deb, one installer, three APKs. Checked before anything is created,
+          # so a missing or doubled package fails here, not halfway through.
+          mapfile -t files < <(find packages -type f | sort)
+          printf '%s\n' "${files[@]}"
+          names="$(printf '%s\n' "${files[@]##*/}")"
+          [[ "$(sort -u <<<"$names" | wc -l)" -eq "${#files[@]}" ]] || { echo "Two packages share a name." >&2; exit 1; }
+          for want in "_amd64.deb" "_x64-setup.exe" "_arm64.apk" "_armv7.apk" "_x86_64.apk"; do
+            grep -q -- "$want\$" <<<"$names" || { echo "No package ending in $want." >&2; exit 1; }
+          done
+          [[ "${#files[@]}" -eq 5 ]] || { echo "Expected 5 packages, found ${#files[@]}." >&2; exit 1; }
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" \
             --title "Wanderer $VERSION" --notes-file notes.md "${flags[@]}"
