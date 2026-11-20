@@ -5,11 +5,17 @@ import type { Problem } from './problem';
 
 export type Transport = 'vision' | 'xhttp';
 
+/** What the network did that the app dealt with; see `wanderer_core::problem::Notice`. */
+export type NoticeKind = 'node_stopped_counting' | 'pings_lost' | 'shared_credentials' | 'slot_taken';
+
+/** A notice, and when it happened (unix seconds): shown once, until dismissed. */
+export type Noticed = { kind: NoticeKind; at: number };
+
 /** The supervisor's state; see `wanderer_core::supervisor::State`. */
 export type State =
 	| { state: 'disconnected' }
 	| { state: 'connecting' }
-	| { state: 'connected'; nodes: number[]; transport: Transport; cover: string }
+	| { state: 'connected'; nodes: number[]; transport: Transport; cover: string; notice?: Noticed }
 	| { state: 'holding'; problem: Problem }
 	| { state: 'failed'; problem: Problem };
 

@@ -192,10 +192,11 @@ export const en = {
 		declined: (_: string | null) => 'You declined the signature. Nothing was done.',
 		wallet_failed: (_: string | null) => 'The wallet could not sign. Try again; if it keeps failing, sign out and in again.',
 		offline: (_: string | null) => 'The network could not be reached. Check the connection and try again.',
-		no_subscription: (_: string | null) => 'This wallet has no active subscription yet. Buy or activate one.',
-		all_sessions_in_use: (_: string | null) => 'Your other devices have taken every connection your subscription allows for today.',
-		session_releasing: (when: string | null) =>
-			when ? `A session that just ended is still letting go. Connecting at ${when}.` : 'A session that just ended is still letting go. Connecting in a minute.',
+		no_subscription: (_: string | null) =>
+			'This wallet has no subscription for the whole of today: none yet, not activated, or ending today. Buy, activate or renew one.',
+		all_sessions_in_use: (_: string | null) => 'Your other devices are using every connection of your subscription.',
+		no_free_slot: (_: string | null) =>
+			'Each hop of the route needs a connection of your subscription, and it has fewer. Shorten the route or add a connection.',
 		gas_budget: (when: string | null) =>
 			`This wallet has used up its free transactions for today. Try again ${when ? `after ${when}` : 'tomorrow'}.`,
 		relay_busy: (_: string | null) => 'The network has no gas left for free transactions right now. Try again later.',
@@ -210,6 +211,15 @@ export const en = {
 		storage: (_: string | null) => 'The app cannot save its data. Check the free disk space.',
 		other: (_: string | null) => 'Something went wrong. The details and the diagnostics log say what.',
 	},
+	// What the network did that the app has already dealt with, shown once
+	// connected again.
+	notice: {
+		node_stopped_counting: 'The node stopped counting your time, so Wanderer moved to another one.',
+		pings_lost: 'The connection stopped reaching the network, so Wanderer opened a new one.',
+		shared_credentials: "This connection's details were used from several places, so Wanderer opened a new one with fresh details.",
+		slot_taken: 'Another of your devices was using this connection of your subscription, so Wanderer moved to a free one.',
+	},
+	dismiss: 'Dismiss',
 	purpose: {
 		identity: 'Create your anonymous identity',
 		sign_in: 'Sign in to the network',

@@ -53,7 +53,7 @@ XRAY=target/xray/xray scripts/leak-test/run.sh
 - **The app and the daemon agree through `crates/tunnel`.** A change to the
   control protocol bumps its version, so an old app and a new daemon refuse
   each other rather than misunderstand.
-- **Everything about Singula goes through the SDK.** Proofs, permissions,
+- **Everything about Singula goes through the SDK.** Proofs, rights, pings,
   Control Plane calls and contract reads come from
   [the Singula Rust SDK](https://github.com/SingulaTeam/rust-sdk), never
   reimplemented here.

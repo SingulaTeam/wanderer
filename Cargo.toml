@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/tunnel", "crates/daemon", "crates/core", "app/src-tauri"]
 
 [workspace.package]
-version = "0.4.4"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.87"
 publish = false
@@ -14,7 +14,7 @@ homepage = "https://wanderer.singula.network"
 [workspace.dependencies]
 wanderer-tunnel = { path = "crates/tunnel" }
 wanderer-core = { path = "crates/core" }
-singula = { git = "https://github.com/SingulaTeam/rust-sdk", tag = "v0.1.0", features = ["client", "http"] }
+singula = { git = "https://github.com/SingulaTeam/rust-sdk", tag = "v0.2.2", features = ["client", "http"] }
 # To work against a local checkout of the SDK, uncomment this and keep the
 # line above unchanged:
 #

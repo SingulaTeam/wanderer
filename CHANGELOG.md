@@ -6,8 +6,25 @@ All notable changes to Wanderer are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-21
+
 ### Changed
 
+- Connections run on the Singula network's shared journal (Singula Rust SDK
+  0.2.2): each connection of the subscription proves its day once and is kept
+  by pings the Control Planes record together. Connections no longer wait
+  for a session that just ended to let go.
+- When the network closes a connection, Wanderer reconnects on its own and,
+  once connected again, says what happened in a banner on the home screen:
+  the node stopped counting time (Wanderer moves to another node), the
+  connection stopped reaching the network, its details were used from
+  several places, or another of the person's devices held that connection
+  of the subscription. Routine closes, such as after a long idle, are only
+  logged.
+- When every connection of the subscription is held by the person's other
+  devices, Wanderer stops and says so instead of taking one from them.
+- A route needs one connection of the subscription per hop; a route longer
+  than the subscription allows is refused with that reason.
 - CI runs the tests that need a real Xray and nftables, and the leak test;
   a release is published only when every check passes on the tagged commit.
 
@@ -31,5 +48,6 @@ All notable changes to Wanderer are recorded here. The format follows
 
 0.1.0 to 0.4.3 were released before the repository was public.
 
-[Unreleased]: https://github.com/SingulaTeam/wanderer/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/SingulaTeam/wanderer/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/SingulaTeam/wanderer/compare/v0.4.4...v0.5.0
 [0.4.4]: https://github.com/SingulaTeam/wanderer/releases/tag/v0.4.4

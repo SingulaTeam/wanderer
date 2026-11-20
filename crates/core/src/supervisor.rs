@@ -23,9 +23,17 @@
 //!
 //! A route of several hops is opened one hop at a time, each session asked
 //! for through the hops already up: the Control Plane of a hop sees the hop
-//! before it, never the person. Its reports keep to that path — traffic to a
+//! before it, never the person. Its pings keep to that path — traffic to a
 //! hop's Control Plane leaves the chain at that hop. If any hop is lost, the
-//! whole chain is rebuilt.
+//! whole chain is rebuilt. Each hop holds one of the subscription's slots,
+//! so a route has at most as many hops as the subscription has slots.
+//!
+//! The network may close a session itself: idle too long, its pings lost,
+//! its node no longer counting time, another device on its slot. Wanderer
+//! reconnects as for a lost tunnel, avoiding the node when the node is to
+//! blame, and says what happened once connected again — except when every
+//! slot has been closed in turn for the person's other devices, when it
+//! stops rather than take a slot from them.
 //!
 //! "Carries traffic" is checked, not assumed: once Xray is up, the Control
 //! Plane is asked for its health through the tunnel. That answer has crossed
@@ -46,8 +54,9 @@ use singula::chain::{Clock, HttpRpc};
 use singula::client::store::Store;
 use singula::client::wallet::Wallet;
 use singula::client::{
-    Access, ClientError, ConnectOptions, Connection, Country, Event, Singula, Traffic,
+    Access, ClientError, ConnectOptions, Connection, Country, EndReason, Event, Singula, Traffic,
 };
+use singula::journal::CloseReason;
 use tokio::sync::{mpsc, watch};
 use tokio::time::MissedTickBehavior;
 use wanderer_tunnel::ipc;
@@ -55,7 +64,7 @@ use wanderer_tunnel::{EarlyExit, GuardPolicy, Hop, TunnelPlan};
 
 use crate::daemon::DaemonError;
 use crate::engine::Engine;
-use crate::problem::{self, Problem};
+use crate::problem::{self, Notice, Problem};
 use crate::reach::Reach;
 use crate::route::{self, Owners, Pick, Wanted};
 use crate::transport::{Candidate, Choice, Kind, Offer};
@@ -68,8 +77,11 @@ const POLL_EVERY: Duration = Duration::from_secs(2);
 const CHECK_EVERY: Duration = Duration::from_secs(20);
 /// Failed end-to-end checks in a row that count as a lost tunnel.
 const CHECKS_TO_LOSE: u32 = 2;
-/// Failed reports in a row that call for an end-to-end check now.
-const REPORTS_TO_CHECK: u32 = 2;
+/// Failed pings in a row that call for an end-to-end check now.
+const PINGS_TO_CHECK: u32 = 2;
+/// How long a session must have run for another device's hold on its slot
+/// to count as settled: overlaps after that start a fresh count.
+const OVERLAP_SETTLED: Duration = Duration::from_secs(10 * 60);
 /// Waits between attempts to open a session, growing to the last.
 const BACKOFF: [Duration; 6] = [
     Duration::from_secs(1),
@@ -115,6 +127,10 @@ pub enum State {
         transport: Kind,
         /// Under which cover.
         cover: String,
+        /// What the network did that the app dealt with on the way here,
+        /// for the person to see once.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        notice: Option<Noticed>,
     },
     /// The tunnel is down and the guard holds: nothing leaves while the
     /// supervisor reconnects.
@@ -128,6 +144,16 @@ pub enum State {
         /// What went wrong.
         problem: Problem,
     },
+}
+
+/// A [`Notice`], and when it happened: the UI shows each one once, until
+/// dismissed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Noticed {
+    /// What happened.
+    pub kind: Notice,
+    /// When, in unix seconds.
+    pub at: i64,
 }
 
 enum Command {
@@ -193,6 +219,7 @@ where
         total: Arc::new(Mutex::new(Traffic { up: 0, down: 0 })),
         worked: None,
         owners: Owners::default(),
+        notice: None,
     };
     tokio::spawn(supervisor.run(rx));
     Handle {
@@ -215,6 +242,8 @@ struct Supervisor<S, W, E> {
     worked: Option<Kind>,
     /// Stars' owners, for routes.
     owners: Owners,
+    /// What to show once connected again.
+    notice: Option<Noticed>,
 }
 
 /// Sessions with a tunnel that carries their traffic.
@@ -294,6 +323,8 @@ fn early_exits(cps: &[StarId], reach: &Reach) -> Vec<EarlyExit> {
 enum Exit {
     Command(Option<Command>),
     Lost(String),
+    /// The network closed a session, for this reason.
+    Closed(CloseReason),
     Daemon(DaemonError),
 }
 
@@ -303,11 +334,6 @@ enum Refusal {
     Transient {
         problem: Problem,
         node: Option<StarId>,
-    },
-    /// Worth retrying at `at`, not before.
-    Later {
-        problem: Problem,
-        at: singula::UnixTime,
     },
     /// Not worth retrying.
     Lasting(Problem),
@@ -337,36 +363,23 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
         commands: &mut mpsc::Receiver<Command>,
     ) -> Option<Command> {
         let guard = self.reach.guard(settings.allow_lan);
+        self.notice = None;
         self.set(State::Connecting);
 
-        // Signing may need the network — an in-app wallet signs on its
-        // provider's servers — and the guard would block that, so whatever
-        // the sessions need signed is signed first. The anonymous identity is
-        // kept once derived, so this asks the wallet only the first time.
-        if settings.access == Access::Anonymous {
-            if let Err(e) = self.singula.identity(&*self.wallet).await {
-                let (Refusal::Lasting(problem)
-                | Refusal::Transient { problem, .. }
-                | Refusal::Later { problem, .. }) = refusal(&e, &self.clock());
-                self.off(State::Failed { problem }).await;
-                return commands.recv().await;
-            }
-        }
-        if let Err(e) = self.daemon.hold(&guard).await {
-            self.off(State::Failed {
-                problem: Problem::of_daemon(&e),
-            })
-            .await;
+        if let Err(problem) = self.prepare(&settings, &guard).await {
+            self.off(State::Failed { problem }).await;
             return commands.recv().await;
         }
 
         let mut avoid = HashSet::new();
         let mut attempt = 0;
         let mut connected_before = false;
+        // Sessions in a row another device's hold on their slot closed.
+        let mut overlaps = 0;
         loop {
             let opened = self.open(&settings, &guard, &avoid).await;
-            // Opening is not cancelled midway — it leases a permission that
-            // must be bound or given back — so a command waits for it.
+            // Opening is not cancelled midway — a session half opened would
+            // be left for its Control Plane to sweep — so a command waits.
             if let Ok(command) = commands.try_recv() {
                 if let Ok(live) = opened {
                     self.leave(live, &command).await;
@@ -377,6 +390,7 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
                 Ok(mut live) => {
                     attempt = 0;
                     connected_before = true;
+                    let started = tokio::time::Instant::now();
                     match self.keep(&mut live, &settings, &guard, commands).await {
                         Exit::Command(command) => {
                             if let Some(command) = &command {
@@ -393,6 +407,16 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
                             self.set(State::Holding {
                                 problem: Problem::new(problem::Kind::Lost, reason),
                             });
+                        }
+                        Exit::Closed(reason) => {
+                            let lived = started.elapsed();
+                            let stop = self
+                                .closed(reason, live, lived, &mut overlaps, &mut avoid, &settings)
+                                .await;
+                            if let Err(problem) = stop {
+                                self.off(State::Failed { problem }).await;
+                                return commands.recv().await;
+                            }
                         }
                         Exit::Daemon(e) => {
                             live.end();
@@ -422,15 +446,6 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
                     self.off(State::Failed { problem }).await;
                     return commands.recv().await;
                 }
-                Err(Refusal::Later { problem, at }) => {
-                    tracing::warn!("no session yet: {}", problem.detail);
-                    self.set(State::Holding { problem });
-                    let wait = u64::try_from(at.0 - singula::UnixTime::now().0).unwrap_or(0);
-                    tokio::select! {
-                        command = commands.recv() => return command,
-                        () = tokio::time::sleep(Duration::from_secs(wait + 1)) => {}
-                    }
-                }
                 Err(Refusal::Transient { problem, node }) => {
                     tracing::warn!("no session: {}", problem.detail);
                     avoid.extend(node);
@@ -444,6 +459,69 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
                 }
             }
         }
+    }
+
+    /// Signs what the sessions need signed, then puts the guard up.
+    ///
+    /// Signing may need the network — an in-app wallet signs on its
+    /// provider's servers — and the guard would block that, so it comes
+    /// first. The anonymous identity is kept once derived, so this asks the
+    /// wallet only the first time.
+    async fn prepare(&mut self, settings: &Settings, guard: &GuardPolicy) -> Result<(), Problem> {
+        if settings.access == Access::Anonymous {
+            if let Err(e) = self.singula.identity(&*self.wallet).await {
+                let (Refusal::Lasting(problem) | Refusal::Transient { problem, .. }) =
+                    refusal(&e, &self.clock());
+                return Err(problem);
+            }
+        }
+        self.daemon
+            .hold(guard)
+            .await
+            .map(drop)
+            .map_err(|e| Problem::of_daemon(&e))
+    }
+
+    /// Deals with a session the network closed for `reason` after `lived`:
+    /// avoids its node when the node is to blame, keeps what to tell the
+    /// person once connected again, and stops — `Err` — when every slot has
+    /// been closed in turn for another device, since trying on would only
+    /// take a slot from it.
+    async fn closed(
+        &mut self,
+        reason: CloseReason,
+        live: Live,
+        lived: Duration,
+        overlaps: &mut usize,
+        avoid: &mut HashSet<StarId>,
+        settings: &Settings,
+    ) -> Result<(), Problem> {
+        tracing::warn!("the network closed a session: {reason}");
+        if lived >= OVERLAP_SETTLED {
+            *overlaps = 0;
+        }
+        if reason == CloseReason::Overlap {
+            *overlaps += 1;
+        }
+        let notice = Notice::of_close(&reason);
+        if notice.is_some_and(Notice::blames_the_node) {
+            avoid.extend(live.nodes());
+        }
+        live.end();
+        if *overlaps > self.slots(settings).await {
+            return Err(Problem::new(
+                problem::Kind::AllSessionsInUse,
+                "every slot is held by another device",
+            ));
+        }
+        self.notice = notice.map(|kind| Noticed {
+            kind,
+            at: singula::UnixTime::now().0,
+        });
+        self.set(State::Holding {
+            problem: Problem::new(problem::Kind::Lost, reason.to_string()),
+        });
+        Ok(())
     }
 
     /// Leaves a live session because `command` arrived. A disconnect takes
@@ -465,6 +543,14 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
         guard: &GuardPolicy,
         avoid: &HashSet<StarId>,
     ) -> Result<Live, Refusal> {
+        // Each hop holds one of the subscription's slots.
+        if settings.access == Access::Anonymous && settings.route.len() > self.slots(settings).await
+        {
+            return Err(Refusal::Lasting(Problem::new(
+                problem::Kind::NoFreeSlot,
+                "the route has more hops than the subscription has slots",
+            )));
+        }
         // One hop is the Control Plane's to place, in the country asked for;
         // a chain is placed here, where every hop's operator is seen.
         let route = if settings.route.len() > 1 {
@@ -661,6 +747,7 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
             nodes: live.nodes().iter().map(|n| n.0).collect(),
             transport: Kind::from(&plan.transport),
             cover: cover.clone(),
+            notice: self.notice,
         });
     }
 
@@ -684,10 +771,11 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
             let lost = tokio::select! {
                 command = commands.recv() => return Exit::Command(command),
                 event = next_event(&mut live.connections) => match event {
+                    Some(Event::Ended(EndReason::ClosedByNetwork(reason))) => return Exit::Closed(reason),
                     None | Some(Event::Ended(_)) => return Exit::Lost("a session ended".into()),
-                    Some(Event::ReportFailed { in_a_row, .. }) if in_a_row >= REPORTS_TO_CHECK => {
+                    Some(Event::PingFailed { in_a_row, .. }) if in_a_row >= PINGS_TO_CHECK => {
                         (!self.verify(live.exit_control_plane()).await)
-                            .then(|| "reports stopped getting through".to_owned())
+                            .then(|| "pings stopped getting through".to_owned())
                     }
                     Some(event) => {
                         tracing::debug!(?event);
@@ -733,6 +821,19 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
         }
     }
 
+    /// How many slots the subscription has: how many sessions it can hold at
+    /// once. Without an answer, as many as a route can have, and the Control
+    /// Planes decide.
+    async fn slots(&self, settings: &Settings) -> usize {
+        if settings.access != Access::Anonymous {
+            return usize::MAX;
+        }
+        self.singula
+            .identities(&*self.wallet)
+            .await
+            .map_or(usize::MAX, |slots| slots.len())
+    }
+
     /// Whether the Control Plane answers through the tunnel.
     fn clock(&self) -> Clock {
         self.singula.chain().deployment().clock
@@ -772,7 +873,7 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
             .map(|n| n.star)
     }
 
-    /// The meter a new session reports from: the daemon's count, from now.
+    /// The meter a new session counts from: the daemon's count, from now.
     fn meter(&self) -> impl Fn() -> Traffic + Send + Sync + 'static {
         let total = Arc::clone(&self.total);
         let start = *total.lock().unwrap_or_else(PoisonError::into_inner);
@@ -816,12 +917,9 @@ fn refusal(e: &ClientError, clock: &Clock) -> Refusal {
     let problem = Problem::of_client(e, clock);
     match e {
         ClientError::NotRegistered
-        | ClientError::NoPermissionFree
+        | ClientError::NoFreeSlot
         | ClientError::Wallet(_)
         | ClientError::Store(_) => Refusal::Lasting(problem),
-        // A session that ended moments ago still holds its permission for a
-        // minute or so.
-        ClientError::PermissionFreeAt(at) => Refusal::Later { problem, at: *at },
         // The node, or a Control Plane relaying for it, does not answer as
         // the protocol requires; another node may.
         ClientError::NodeAnswer { node, .. } => Refusal::Transient {
