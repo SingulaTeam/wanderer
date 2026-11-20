@@ -34,7 +34,7 @@ android/xray/       Xray for Android, built as an AAR
 scripts/            release builds, and the leak test
 ```
 
-On a desktop the app runs as the user and asks `wandererd`, a system service, to bring the tunnel up over a local socket. On Android the same core drives a `VpnService`. Everything that touches Singula — Control Planes, proofs, permissions, the contracts — goes through the [Singula Rust SDK](https://github.com/SingulaTeam/rust-sdk).
+On a desktop the app runs as the user and asks `wandererd`, a system service, to bring the tunnel up over a local socket. On Android the same core drives a `VpnService`. Everything that touches Singula — Control Planes, proofs, the shared journal, the contracts — goes through the [Singula Rust SDK](https://github.com/SingulaTeam/rust-sdk).
 
 ## Building
 

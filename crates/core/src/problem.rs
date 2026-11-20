@@ -9,6 +9,7 @@ use singula::UnixTime;
 use singula::chain::Clock;
 use singula::client::ClientError;
 use singula::client::wallet::WalletError;
+use singula::journal::CloseReason;
 
 use crate::daemon::DaemonError;
 use crate::route::Gap;
@@ -37,12 +38,15 @@ pub enum Kind {
     WalletFailed,
     /// No Control Plane or RPC node answered.
     Offline,
-    /// The wallet's identity is in no active subscription.
+    /// The wallet's identity is in no active subscription, or the
+    /// subscription ends today.
     NoSubscription,
-    /// Every session the subscription allows is open.
+    /// Every slot of the subscription is held by another of the person's
+    /// devices.
     AllSessionsInUse,
-    /// A session that just ended still holds its permission, until `at`.
-    SessionReleasing,
+    /// The route has more hops than the subscription has slots: each hop
+    /// holds one.
+    NoFreeSlot,
     /// The wallet has used up its gasless transactions until `at`.
     GasBudget,
     /// The relaying Control Plane has used up its gas for now.
@@ -103,13 +107,7 @@ impl Problem {
             | ClientError::NoControlPlane
             | ClientError::Chain(_) => Kind::Offline,
             ClientError::NotRegistered => Kind::NoSubscription,
-            ClientError::NoPermissionFree => Kind::AllSessionsInUse,
-            ClientError::PermissionFreeAt(at) => {
-                return Self {
-                    at: Some(at.0),
-                    ..Self::new(Kind::SessionReleasing, detail)
-                };
-            }
+            ClientError::NoFreeSlot => Kind::NoFreeSlot,
             ClientError::NodeAnswer { .. } => Kind::Node,
             ClientError::Store(_) => Kind::Storage,
             ClientError::Refused { message, .. } => match reverted(message) {
@@ -131,6 +129,46 @@ impl Problem {
     #[must_use]
     pub fn of_daemon(e: &DaemonError) -> Self {
         Self::new(Kind::Service, e.to_string())
+    }
+}
+
+/// Something the network did to the connection and the app has already
+/// dealt with, shown once it is connected again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Notice {
+    /// The node saw traffic its Control Planes recorded no time for; the
+    /// app moved to another node.
+    NodeStoppedCounting,
+    /// The connection's pings stopped reaching the network; the app opened
+    /// a new one.
+    PingsLost,
+    /// The connection's credentials were used from several places; the app
+    /// opened a new connection, with new ones.
+    SharedCredentials,
+    /// Another device held the slot; the app moved to another slot.
+    SlotTaken,
+}
+
+impl Notice {
+    /// What to tell the person about a connection the network closed for
+    /// `reason`, once the app has reconnected; `None` for the routine
+    /// closes, which only the log hears of.
+    #[must_use]
+    pub fn of_close(reason: &CloseReason) -> Option<Self> {
+        match reason {
+            CloseReason::NoPings | CloseReason::PingsNotGrowing => Some(Self::PingsLost),
+            CloseReason::NodeNotGrowing => Some(Self::NodeStoppedCounting),
+            CloseReason::SharedCredentials => Some(Self::SharedCredentials),
+            CloseReason::Overlap => Some(Self::SlotTaken),
+            _ => None,
+        }
+    }
+
+    /// Whether the node is to blame, so the next connection should avoid it.
+    #[must_use]
+    pub fn blames_the_node(self) -> bool {
+        self == Self::NodeStoppedCounting
     }
 }
 
@@ -220,6 +258,32 @@ mod tests {
         let data = format!("74c412f5{:064x}{:064x}{inner}", 32, inner.len() / 2);
         let e = refused(&format!("mint failed, revert data: 0x{data}"));
         assert_eq!(Problem::of_client(&e, &CLOCK).kind, Kind::InsufficientFunds);
+    }
+
+    #[test]
+    fn says_which_closes_to_tell_and_whom_to_blame() {
+        for (reason, notice) in [
+            (CloseReason::Idle, None),
+            (CloseReason::Expired, None),
+            (CloseReason::Terminated, None),
+            (CloseReason::RightEnded, None),
+            (CloseReason::NoPings, Some(Notice::PingsLost)),
+            (CloseReason::PingsNotGrowing, Some(Notice::PingsLost)),
+            (
+                CloseReason::NodeNotGrowing,
+                Some(Notice::NodeStoppedCounting),
+            ),
+            (
+                CloseReason::SharedCredentials,
+                Some(Notice::SharedCredentials),
+            ),
+            (CloseReason::Overlap, Some(Notice::SlotTaken)),
+            (CloseReason::Other("new".into()), None),
+        ] {
+            assert_eq!(Notice::of_close(&reason), notice, "{reason:?}");
+        }
+        assert!(Notice::NodeStoppedCounting.blames_the_node());
+        assert!(!Notice::SlotTaken.blames_the_node());
     }
 
     #[test]

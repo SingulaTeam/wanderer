@@ -8,7 +8,7 @@ export type ProblemKind =
 	| 'offline'
 	| 'no_subscription'
 	| 'all_sessions_in_use'
-	| 'session_releasing'
+	| 'no_free_slot'
 	| 'gas_budget'
 	| 'relay_busy'
 	| 'insufficient_funds'

@@ -8,11 +8,6 @@ all-features = true
 # Every RustSec advisory fails the build; an exception needs an entry here
 # with the reason it does not apply to Wanderer.
 ignore = [
-    # RSA private-key timing (Marvin), in `rsa` via the SDK's
-    # blind-rsa-signatures. The client only blinds, unblinds and verifies —
-    # public-key operations; the private key is the issuer's and never in
-    # this process.
-    { id = "RUSTSEC-2023-0071", reason = "public-key operations only" },
     # ANSI injection in tracing-subscriber 0.2, pulled in by arkworks'
     # ark-relations through the SDK. Wanderer's own subscriber is 0.3, and
     # nothing installs a 0.2 subscriber.

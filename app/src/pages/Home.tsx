@@ -37,6 +37,8 @@ export default function Home({ address }: { address: string }) {
 	const [sheet, setSheet] = useState<'route' | 'settings' | 'subscriptions' | 'diagnostics' | 'plan' | null>(null);
 	const [since, setSince] = useState<number | null>(null);
 	const [now, setNow] = useState(Date.now());
+	// The notice the person has hidden, by when it happened.
+	const [dismissed, setDismissed] = useState<number | null>(null);
 	const wallet = useActiveWallet();
 	const { disconnect } = useDisconnect();
 	const sub = useAccount(readiness.ready === 'yes');
@@ -125,7 +127,7 @@ export default function Home({ address }: { address: string }) {
 	else if (s === 'holding')
 		[title, detail] = [
 			t.reconnecting,
-			state.problem.kind === 'session_releasing' || state.problem.kind === 'route'
+			state.problem.kind === 'route'
 				? explain(state.problem)
 				: t.reconnectingDetail,
 		];
@@ -174,6 +176,10 @@ export default function Home({ address }: { address: string }) {
 					<h1 className="text-[26px] font-semibold tracking-tight">{title}</h1>
 					{detail && <p className="mx-auto max-w-[300px] break-words text-sm leading-snug text-muted">{detail}</p>}
 				</div>
+
+				{state.state === 'connected' && state.notice && state.notice.at !== dismissed && (
+					<NoticeBanner text={t.notice[state.notice.kind]} dismiss={t.dismiss} onDismiss={() => setDismissed(state.notice?.at ?? null)} />
+				)}
 
 				<OrbitButton
 					orbit={orbit}
@@ -402,6 +408,25 @@ function Stat({ label, value }: { label: string; value: string }) {
 		<div className="flex flex-col gap-1 rounded-2xl bg-white/[0.04] px-3.5 py-3">
 			<span className="text-xs text-muted">{label}</span>
 			<span className="text-lg font-semibold tabular-nums">{value}</span>
+		</div>
+	);
+}
+
+/** What the network did and what the app did about it, until hidden. */
+function NoticeBanner({ text, dismiss, onDismiss }: { text: string; dismiss: string; onDismiss: () => void }) {
+	return (
+		<div role="status" className="flex w-full max-w-[360px] items-start gap-1 rounded-2xl border border-line bg-card py-1 pl-4 pr-1">
+			<p className="min-w-0 flex-1 break-words py-2.5 text-[13px] leading-snug text-muted">{text}</p>
+			<button
+				type="button"
+				aria-label={dismiss}
+				onClick={onDismiss}
+				className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted hover:text-white"
+			>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+					<path d="M6 6l12 12M18 6L6 18" />
+				</svg>
+			</button>
 		</div>
 	);
 }
