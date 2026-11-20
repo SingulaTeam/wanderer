@@ -8,6 +8,11 @@ All notable changes to Wanderer are recorded here. The format follows
 
 ## [0.5.0] - 2026-11-21
 
+### Security
+
+- `rustix` 1.1.5 → 1.1.6 (RUSTSEC-2026-0486), in the service and through
+  Tauri's single-instance plugin.
+
 ### Changed
 
 - Connections run on the Singula network's shared journal (Singula Rust SDK
