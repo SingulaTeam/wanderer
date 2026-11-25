@@ -6,6 +6,8 @@ All notable changes to Wanderer are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-25
+
 ### Security
 
 - `url` 2.5.8 → 2.5.9 (RUSTSEC-2026-0592), through the SDK's HTTP client.
@@ -82,6 +84,7 @@ All notable changes to Wanderer are recorded here. The format follows
 
 0.1.0 to 0.4.3 were released before the repository was public.
 
-[Unreleased]: https://github.com/SingulaTeam/wanderer/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/SingulaTeam/wanderer/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/SingulaTeam/wanderer/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/SingulaTeam/wanderer/compare/v0.4.4...v0.5.0
 [0.4.4]: https://github.com/SingulaTeam/wanderer/releases/tag/v0.4.4

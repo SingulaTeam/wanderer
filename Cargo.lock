@@ -7006,7 +7006,7 @@ dependencies = [
 
 [[package]]
 name = "wanderer-app"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -7026,7 +7026,7 @@ dependencies = [
 
 [[package]]
 name = "wanderer-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "rand 0.9.5",
  "serde",
@@ -7040,7 +7040,7 @@ dependencies = [
 
 [[package]]
 name = "wanderer-daemon"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "rand 0.9.5",
  "rustix",
@@ -7057,7 +7057,7 @@ dependencies = [
 
 [[package]]
 name = "wanderer-tunnel"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
