@@ -28,6 +28,8 @@ export type Settings = {
 	same_operator: boolean;
 	/** A cover preset, such as `RU`; null for the node's choice. */
 	cover: string | null;
+	/** The DNS resolver as typed (see `lib/dns`); null for Cloudflare. */
+	dns: string | null;
 	/** Two plans and an entry and exit, or every hop and setting. */
 	mode: Mode;
 };

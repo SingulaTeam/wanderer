@@ -121,7 +121,7 @@ impl Engine for Daemon {
         guard: &GuardPolicy,
     ) -> Result<Status, DaemonError> {
         let request = Request::Connect {
-            plan: plan.clone(),
+            plan: Box::new(plan.clone()),
             guard: guard.clone(),
         };
         self.request(&request).await

@@ -46,8 +46,8 @@ pub enum Request {
     /// `plan`, replacing any Xray already running. The guard goes up first,
     /// so there is no moment with a tunnel and no guard.
     Connect {
-        /// Where the tunnel goes.
-        plan: TunnelPlan,
+        /// Where the tunnel goes. Boxed: it outweighs every other request.
+        plan: Box<TunnelPlan>,
         /// What else the guard lets out.
         guard: GuardPolicy,
     },
@@ -138,7 +138,7 @@ mod tests {
         let requests = [
             Request::Status,
             Request::Connect {
-                plan: crate::plan::tests::chain(2),
+                plan: Box::new(crate::plan::tests::chain(2)),
                 guard: GuardPolicy {
                     allowed: vec![Endpoint("198.51.100.4:443".parse().unwrap())],
                     allow_lan: true,

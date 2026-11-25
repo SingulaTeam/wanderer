@@ -4,8 +4,8 @@
 //! halves of the IPv4 space (a single `0.0.0.0/0` loses to the existing
 //! default route on metric), the proxy as the first and therefore default
 //! outbound, and no direct outbound at all, so nothing Xray handles can leave
-//! outside the tunnel. DNS sent into the TUN is answered by Xray itself, over
-//! DNS-over-HTTPS through the proxy.
+//! outside the tunnel. DNS sent into the TUN is answered by Xray itself, from
+//! the plan's resolver, through the proxy.
 //!
 //! A chain is one outbound per node, each dialled through the one before it;
 //! the last is the default. Addresses that leave the chain early are routed
@@ -56,13 +56,9 @@ pub const PREFIX: u8 = 30;
 pub const MTU: u16 = 1500;
 /// The default route split in two, each more specific than any default.
 pub const ROUTES: [&str; 2] = ["0.0.0.0/1", "128.0.0.0/1"];
-/// Asked through the tunnel, so the resolver sees the node, not the user.
-const RESOLVER: &str = "https://1.1.1.1/dns-query";
 const VISION_FLOW: &str = "xtls-rprx-vision";
 /// The default outbound: the chain's last hop.
 const PROXY: &str = "proxy";
-/// Where queries other than A and AAAA go, through the tunnel.
-const FORWARD_RESOLVER: &str = "1.1.1.1";
 
 /// The configuration that carries the machine's traffic along `plan`.
 ///
@@ -73,7 +69,9 @@ pub fn config(plan: &TunnelPlan, host: Host) -> Value {
         // No access log: it would record every destination the user visits.
         "log": { "loglevel": "warning", "access": "none" },
         "dns": {
-            "servers": [RESOLVER],
+            // Asked through the tunnel, so the resolver sees the node, not
+            // the user.
+            "servers": [plan.resolver.server()],
             // IPv6 is not tunnelled yet; the guard drops it.
             "queryStrategy": "UseIPv4",
         },
@@ -91,7 +89,7 @@ pub fn config(plan: &TunnelPlan, host: Host) -> Value {
         }] },
     });
     let mut outbounds = hops(plan);
-    outbounds.push(dns());
+    outbounds.push(dns(&plan.resolver.address.to_string()));
     config["outbounds"] = Value::Array(outbounds);
     if let Some(rules) = config["routing"]["rules"].as_array_mut() {
         rules.extend(early_exits(plan));
@@ -139,14 +137,15 @@ fn tun(host: Host) -> Value {
 
 /// Answers the DNS sent into the TUN: A and AAAA by Xray's own resolver
 /// (over `DoH`, through the proxy); every other type — TXT, MX, SRV, which mail
-/// clients and messengers need — passed to a public resolver, through the
-/// proxy too. Without the second rule Xray answers those with nothing.
-fn dns() -> Value {
+/// clients and messengers need — passed to the same resolver over plain DNS,
+/// through the proxy too. Without the second rule Xray answers those with
+/// nothing.
+fn dns(forward_to: &str) -> Value {
     json!({
         "tag": "dns",
         "protocol": "dns",
         "settings": {
-            "rewriteAddress": FORWARD_RESOLVER,
+            "rewriteAddress": forward_to,
             "rewritePort": 53,
             "rules": [
                 { "action": "hijack", "qType": "1,28" },
@@ -277,6 +276,19 @@ mod tests {
         assert_eq!(proxy["streamSettings"]["network"], "xhttp");
         assert_eq!(proxy["streamSettings"]["xhttpSettings"]["path"], path);
         assert_eq!(proxy["streamSettings"]["security"], "reality");
+    }
+
+    #[test]
+    fn dns_is_asked_of_the_plans_resolver() {
+        let c = config(&plan(Transport::Vision), HOST);
+        assert_eq!(c["dns"]["servers"], json!(["https://1.1.1.1/dns-query"]));
+        assert_eq!(c["outbounds"][1]["settings"]["rewriteAddress"], "1.1.1.1");
+
+        let mut p = plan(Transport::Vision);
+        p.resolver = crate::Resolver::parse("8.8.8.8").unwrap();
+        let c = config(&p, HOST);
+        assert_eq!(c["dns"]["servers"], json!(["8.8.8.8"]));
+        assert_eq!(c["outbounds"][1]["settings"]["rewriteAddress"], "8.8.8.8");
     }
 
     #[test]

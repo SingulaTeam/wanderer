@@ -161,6 +161,13 @@ export const en = {
 	coverAuto: 'Auto',
 	coverHint: 'What the connection looks like on the wire. Pick your country if its network filters traffic.',
 
+	// DNS.
+	dns: 'DNS',
+	dnsHint: 'Where the names of sites are looked up. The queries go through the tunnel, so the resolver sees the node, not you.',
+	dnsCustom: 'Custom',
+	dnsInvalid: 'An address such as 9.9.9.9, or https:// with an address and a path. Names and local network addresses do not work.',
+	dnsPlain: 'Without https:// the queries are not encrypted: the exit node sees every name looked up.',
+
 	// Diagnostics.
 	diagnostics: 'Diagnostics',
 	diagnosticsHint: 'The app\'s recent log, to send with a problem report. It holds no keys and no sites you visited.',

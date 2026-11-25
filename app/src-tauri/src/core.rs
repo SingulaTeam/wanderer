@@ -26,7 +26,7 @@ use wanderer_core::problem::{Kind, Problem};
 use wanderer_core::reach::{ControlPlaneReach, Reach, Resolved};
 use wanderer_core::supervisor::{self, Handle, State};
 use wanderer_core::transport::Choice;
-use wanderer_tunnel::ipc;
+use wanderer_tunnel::{Resolver, ipc};
 
 use crate::relay::Relay;
 use crate::wallet::{Pending, WebviewWallet};
@@ -61,6 +61,11 @@ pub(crate) struct Settings {
     /// wire, for networks that filter by it; none for the node's choice.
     #[serde(default)]
     pub(crate) cover: Option<String>,
+    /// The DNS resolver as typed — `https://<IPv4>/<path>` or an IPv4
+    /// address — asked through the tunnel; none for Cloudflare over
+    /// DNS-over-HTTPS.
+    #[serde(default)]
+    pub(crate) dns: Option<String>,
     /// How much of the route and transport the app shows: two plans, or
     /// every hop and setting.
     #[serde(default)]
@@ -95,6 +100,15 @@ impl Settings {
         self.route.truncate(wanderer_core::route::MAX_HOPS);
         if self.route.is_empty() {
             self.route = one_hop();
+        }
+        // The webview checks what is typed; one it let through, or a file
+        // edited by hand, is the default rather than a connection that fails.
+        if self
+            .dns
+            .as_deref()
+            .is_some_and(|d| Resolver::parse(d).is_none())
+        {
+            self.dns = None;
         }
         self
     }
@@ -786,6 +800,11 @@ impl Core {
             cover: s.cover.clone(),
             transport: s.transport,
             allow_lan: s.allow_lan,
+            resolver: s
+                .dns
+                .as_deref()
+                .and_then(Resolver::parse)
+                .unwrap_or_default(),
         }
     }
 
@@ -973,5 +992,16 @@ mod tests {
             read(r#"{"transport":"auto","allow_lan":false,"route":[]}"#).route,
             [None]
         );
+    }
+
+    #[test]
+    fn settings_keep_only_a_resolver_the_daemon_accepts() {
+        let read = |json: &str| serde_json::from_str::<Settings>(json).unwrap().normalized();
+        assert_eq!(read(r#"{"transport":"auto","allow_lan":false}"#).dns, None);
+        let quad9 =
+            read(r#"{"transport":"auto","allow_lan":false,"dns":"https://9.9.9.9/dns-query"}"#);
+        assert_eq!(quad9.dns.as_deref(), Some("https://9.9.9.9/dns-query"));
+        let lan = read(r#"{"transport":"auto","allow_lan":false,"dns":"192.168.1.1"}"#);
+        assert_eq!(lan.dns, None, "a resolver on the local network is refused");
     }
 }

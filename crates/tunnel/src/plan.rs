@@ -35,6 +35,76 @@ pub struct TunnelPlan {
     /// Addresses whose traffic leaves the chain before its last hop.
     #[serde(default)]
     pub early_exits: Vec<EarlyExit>,
+    /// Where the machine's DNS queries are answered, through the tunnel.
+    #[serde(default)]
+    pub resolver: Resolver,
+}
+
+/// The DNS resolver Xray asks the machine's queries of. Every query goes
+/// through the tunnel, so the resolver sees the exit node, not the user.
+///
+/// An address, not a name: there is nothing to resolve a resolver's name with
+/// before it is up. Over DNS-over-HTTPS the exit node sees only that a
+/// resolver is asked; over plain DNS, every name asked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resolver {
+    /// The resolver's address. Query types other than A and AAAA are sent
+    /// here over plain DNS too, on port 53.
+    pub address: Ipv4Addr,
+    /// The DNS-over-HTTPS path, such as `/dns-query`; none for plain DNS.
+    pub doh_path: Option<String>,
+}
+
+impl Default for Resolver {
+    /// Cloudflare, over DNS-over-HTTPS.
+    fn default() -> Self {
+        Self {
+            address: Ipv4Addr::new(1, 1, 1, 1),
+            doh_path: Some("/dns-query".into()),
+        }
+    }
+}
+
+impl Resolver {
+    /// Reads `https://<IPv4>/<path>` for DNS-over-HTTPS or a bare IPv4
+    /// address for plain DNS, as the person types it.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let resolver = if let Some(rest) = s.strip_prefix("https://") {
+            let (host, path) = rest.split_at(rest.find('/')?);
+            Self {
+                address: host.parse().ok()?,
+                doh_path: Some(path.to_owned()),
+            }
+        } else {
+            Self {
+                address: s.parse().ok()?,
+                doh_path: None,
+            }
+        };
+        resolver.validate().ok().map(|()| resolver)
+    }
+
+    /// The server as Xray names it.
+    #[must_use]
+    pub fn server(&self) -> String {
+        match &self.doh_path {
+            Some(path) => format!("https://{}{path}", self.address),
+            None => self.address.to_string(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), InvalidPlan> {
+        check(
+            "resolver address",
+            routable(SocketAddrV4::new(self.address, 53)),
+        )?;
+        check(
+            "resolver path",
+            self.doh_path.as_deref().is_none_or(is_path),
+        )
+    }
 }
 
 /// A hop after the first: a session opened as a chain's leg.
@@ -170,7 +240,8 @@ impl TunnelPlan {
                     usize::from(e.hop) < self.onward.len()
                         && routable(SocketAddrV4::new(e.address, 1))
                 }),
-        )
+        )?;
+        self.resolver.validate()
     }
 }
 
@@ -277,6 +348,7 @@ impl std::fmt::Debug for TunnelPlan {
                 "onward",
                 &self.onward.iter().map(|h| h.node).collect::<Vec<_>>(),
             )
+            .field("resolver", &self.resolver.server())
             .finish_non_exhaustive()
     }
 }
@@ -298,6 +370,7 @@ pub(crate) mod tests {
             transport,
             onward: Vec::new(),
             early_exits: Vec::new(),
+            resolver: Resolver::default(),
         }
     }
 
@@ -437,5 +510,54 @@ pub(crate) mod tests {
             address: Ipv4Addr::new(192, 168, 1, 1),
         }];
         assert_eq!(field(&p), Some("early exits"));
+    }
+
+    #[test]
+    fn reads_a_resolver_as_typed() {
+        let doh = Resolver::parse(" https://9.9.9.9/dns-query ").unwrap();
+        assert_eq!(doh.address, Ipv4Addr::new(9, 9, 9, 9));
+        assert_eq!(doh.server(), "https://9.9.9.9/dns-query");
+        let plain = Resolver::parse("8.8.8.8").unwrap();
+        assert_eq!(
+            (plain.doh_path.as_deref(), plain.server()),
+            (None, "8.8.8.8".into())
+        );
+        assert_eq!(
+            Resolver::default().server(),
+            "https://1.1.1.1/dns-query",
+            "what Wanderer asked before the setting"
+        );
+    }
+
+    #[test]
+    fn refuses_a_resolver_it_cannot_reach_or_should_not() {
+        for typed in [
+            "",
+            "dns.google",
+            "https://dns.google/dns-query",
+            "https://1.1.1.1",
+            "https://1.1.1.1/dns?x=1",
+            "tls://1.1.1.1",
+            "1.1.1.1:53",
+            "192.168.1.1",
+            "https://127.0.0.1/dns-query",
+            "0.0.0.0",
+        ] {
+            assert_eq!(Resolver::parse(typed), None, "{typed}");
+        }
+        let mut p = plan(Transport::Vision);
+        p.resolver.address = Ipv4Addr::new(10, 0, 0, 1);
+        assert_eq!(field(&p), Some("resolver address"));
+        let mut p = plan(Transport::Vision);
+        p.resolver.doh_path = Some("dns-query".into());
+        assert_eq!(field(&p), Some("resolver path"));
+    }
+
+    #[test]
+    fn a_plan_from_before_the_resolver_asks_cloudflare() {
+        let mut json = serde_json::to_value(plan(Transport::Vision)).unwrap();
+        json.as_object_mut().unwrap().remove("resolver");
+        let read: TunnelPlan = serde_json::from_value(json).unwrap();
+        assert_eq!(read.resolver, Resolver::default());
     }
 }

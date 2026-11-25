@@ -21,6 +21,10 @@
 //! when none carries traffic is the session given up and a new one opened,
 //! on another node.
 //!
+//! Every hop's node is chosen with its Control Plane, from the lists of all
+//! of them: a session on a right opens only at the Control Plane its node is
+//! connected to.
+//!
 //! A route of several hops is opened one hop at a time, each session asked
 //! for through the hops already up: the Control Plane of a hop sees the hop
 //! before it, never the person. Its pings keep to that path — traffic to a
@@ -60,7 +64,7 @@ use singula::journal::CloseReason;
 use tokio::sync::{mpsc, watch};
 use tokio::time::MissedTickBehavior;
 use wanderer_tunnel::ipc;
-use wanderer_tunnel::{EarlyExit, GuardPolicy, Hop, TunnelPlan};
+use wanderer_tunnel::{EarlyExit, GuardPolicy, Hop, Resolver, TunnelPlan};
 
 use crate::daemon::DaemonError;
 use crate::engine::Engine;
@@ -109,6 +113,8 @@ pub struct Settings {
     pub transport: Choice,
     /// Whether the local network stays reachable.
     pub allow_lan: bool,
+    /// Where DNS is asked, through the tunnel.
+    pub resolver: Resolver,
 }
 
 /// Where the connection is, for the UI.
@@ -551,26 +557,18 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
                 "the route has more hops than the subscription has slots",
             )));
         }
-        // One hop is the Control Plane's to place, in the country asked for;
-        // a chain is placed here, where every hop's operator is seen.
-        let route = if settings.route.len() > 1 {
-            self.route(settings, avoid).await?
-        } else {
-            Vec::new()
-        };
+        // Every hop is placed here, a single one too: a session on a right
+        // opens only at the Control Plane its node is connected to, so the
+        // node and its Control Plane are chosen together, from every Control
+        // Plane's list. Asking one Control Plane for a country fails whenever
+        // the country's nodes are connected to another.
+        let route = self.route(settings, avoid).await?;
         let mut options = ConnectOptions::new().access(settings.access);
         if let Some(cover) = &settings.cover {
             options = options.cover(cover.clone());
         }
         if let Some(entry) = route.first() {
             options = options.control_plane(entry.cp).node(entry.node);
-        } else {
-            if let Some(country) = settings.route.first().copied().flatten() {
-                options = options.country(country);
-            }
-            if let Some(node) = self.another_node(settings, avoid).await {
-                options = options.node(node);
-            }
         }
 
         let meter = self.meter();
@@ -713,11 +711,9 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
     ) -> Result<bool, DaemonError> {
         let candidates = live.offer.plans(live.node, settings.transport, self.worked);
         for Candidate { cover, plan } in candidates {
-            match self
-                .daemon
-                .connect(&live.plan(plan.clone(), &self.reach), guard)
-                .await
-            {
+            let mut whole = live.plan(plan.clone(), &self.reach);
+            whole.resolver.clone_from(&settings.resolver);
+            match self.daemon.connect(&whole, guard).await {
                 Ok(_) => {}
                 Err(DaemonError::Refused { message, .. }) => {
                     tracing::warn!("the daemon refused a plan: {message}");
@@ -852,25 +848,6 @@ impl<S: Store + 'static, W: Wallet + 'static, E: Engine> Supervisor<S, W, E> {
             }
         }
         false
-    }
-
-    /// When nodes have failed, another one: from the Control Plane's list,
-    /// in the preferred country if there is one there.
-    async fn another_node(&self, settings: &Settings, avoid: &HashSet<StarId>) -> Option<StarId> {
-        if avoid.is_empty() {
-            return None;
-        }
-        let country = settings.route.first().copied().flatten();
-        let cp = self.singula.choose_control_plane().await.ok()?;
-        let nodes = cp.list_nodes().await.ok()?;
-        let usable = |n: &&singula::client::NodeCandidate| n.available && !avoid.contains(&n.star);
-        let in_country = nodes
-            .iter()
-            .filter(usable)
-            .find(|n| country.is_none() || n.country == country);
-        in_country
-            .or_else(|| nodes.iter().find(usable))
-            .map(|n| n.star)
     }
 
     /// The meter a new session counts from: the daemon's count, from now.

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use wanderer_tunnel::xray::{Host, config};
-use wanderer_tunnel::{EarlyExit, Hop, Reality, Transport, TunnelPlan};
+use wanderer_tunnel::{EarlyExit, Hop, Reality, Resolver, Transport, TunnelPlan};
 
 const PRIVATE_KEY: &str = "ULw3MVRstZBmlk2V7etFFtrHI7-L4WDxB2Ig0dlUfF0";
 const PUBLIC_KEY: &str = "RoVb1JP4IfCan5Wv47SJKYtXkSulY_esacbfRPlTP2I";
@@ -183,6 +183,7 @@ fn a_chain_carries_traffic_and_early_exits_leave_at_their_hop() {
             hop: 0,
             address: EARLY.parse().unwrap(),
         }],
+        resolver: Resolver::default(),
     };
     let mut client = config(&plan, Host::Android);
     let entry = free_port();
