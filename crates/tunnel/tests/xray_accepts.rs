@@ -11,7 +11,7 @@ use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use wanderer_tunnel::xray::{Host, config};
-use wanderer_tunnel::{EarlyExit, Hop, Reality, Transport, TunnelPlan};
+use wanderer_tunnel::{EarlyExit, Hop, Reality, Resolver, Transport, TunnelPlan};
 
 fn plan(transport: Transport) -> TunnelPlan {
     TunnelPlan {
@@ -26,7 +26,15 @@ fn plan(transport: Transport) -> TunnelPlan {
         transport,
         onward: Vec::new(),
         early_exits: Vec::new(),
+        resolver: Resolver::default(),
     }
+}
+
+/// `plan` asking a resolver over plain DNS.
+fn plain_dns(transport: Transport) -> TunnelPlan {
+    let mut p = plan(transport);
+    p.resolver = Resolver::parse("8.8.8.8").unwrap();
+    p
 }
 
 /// Three nodes, with a Control Plane's address leaving at each of the first
@@ -60,7 +68,11 @@ fn xray_accepts_both_transports() {
             path: "/api/v1/session/heartbeat".into(),
         },
     ] {
-        for plan in [plan(transport.clone()), chain(transport.clone())] {
+        for plan in [
+            plan(transport.clone()),
+            chain(transport.clone()),
+            plain_dns(transport.clone()),
+        ] {
             // Windows' TUN settings are checked only on Windows, where its
             // filters exist.
             for host in [

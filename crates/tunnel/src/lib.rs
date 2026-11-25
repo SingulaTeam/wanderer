@@ -24,7 +24,7 @@ pub mod wfp;
 pub mod xray;
 
 pub use plan::{
-    EarlyExit, Endpoint, GuardPolicy, Hop, InvalidPlan, Reality, Transport, TunnelPlan,
+    EarlyExit, Endpoint, GuardPolicy, Hop, InvalidPlan, Reality, Resolver, Transport, TunnelPlan,
 };
 
 /// The name of the TUN interface Xray creates.

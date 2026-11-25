@@ -1,7 +1,8 @@
-// Transport, the local network, the language, and the account.
+// Transport, DNS, the local network, the language, and the account.
 import { useState } from 'react';
 import { LOCALES, useI18n, type Locale } from '../i18n';
 import type { Settings } from '../lib/core';
+import { RESOLVERS, checkResolver } from '../lib/dns';
 import { Sheet } from './Sheet';
 import { Toggle } from './Toggle';
 
@@ -77,6 +78,8 @@ export function SettingsSheet({
 								onChange={(v) => onChange({ ...settings, cover: v === 'auto' ? null : v })}
 							/>
 						</Field>
+
+						<DnsField value={settings.dns} onChange={(dns) => onChange({ ...settings, dns })} />
 					</>
 				)}
 
@@ -123,6 +126,71 @@ export function SettingsSheet({
 				</Field>
 			</div>
 		</Sheet>
+	);
+}
+
+/** The resolver: three by name, or one typed, saved once the core would take it. */
+function DnsField({ value, onChange }: { value: string | null; onChange: (dns: string | null) => void }) {
+	const { t } = useI18n();
+	const named = RESOLVERS.find((r) => r.value === value);
+	const [custom, setCustom] = useState(!named);
+	const [typed, setTyped] = useState(named ? '' : (value ?? ''));
+	const check = checkResolver(typed);
+
+	const type = (s: string) => {
+		setTyped(s);
+		if (checkResolver(s) !== 'invalid') onChange(s.trim());
+	};
+
+	const option = (selected: boolean, name: string, onClick: () => void) => (
+		<button
+			key={name}
+			type="button"
+			role="radio"
+			aria-checked={selected}
+			onClick={onClick}
+			className={`h-10 min-w-0 truncate rounded-xl px-2 text-sm transition-colors ${
+				selected ? 'bg-raised font-medium text-fg' : 'text-muted hover:text-fg'
+			}`}
+		>
+			{name}
+		</button>
+	);
+
+	return (
+		<Field label={t.dns} hint={t.dnsHint}>
+			{/* Two columns: four names in one row do not fit a narrow phone. */}
+			<div role="radiogroup" aria-label={t.dns} className="grid grid-cols-2 gap-1 rounded-2xl bg-bg p-1">
+				{RESOLVERS.map((r) =>
+					option(!custom && named?.id === r.id, r.name, () => {
+						setCustom(false);
+						onChange(r.value);
+					}),
+				)}
+				{option(custom, t.dnsCustom, () => setCustom(true))}
+			</div>
+			{custom && (
+				<>
+					<input
+						type="text"
+						inputMode="url"
+						autoCapitalize="off"
+						autoCorrect="off"
+						spellCheck={false}
+						value={typed}
+						onChange={(e) => type(e.target.value)}
+						placeholder="https://9.9.9.9/dns-query"
+						aria-label={t.dnsCustom}
+						aria-invalid={typed.trim() !== '' && check === 'invalid'}
+						className="h-12 w-full min-w-0 rounded-2xl border border-line bg-bg px-3.5 font-mono text-[15px] text-fg outline-none placeholder:text-muted focus:border-white/30"
+					/>
+					{typed.trim() !== '' && check === 'invalid' && (
+						<span className="text-[13px] leading-snug text-red-400">{t.dnsInvalid}</span>
+					)}
+					{check === 'plain' && <span className="text-[13px] leading-snug text-hold">{t.dnsPlain}</span>}
+				</>
+			)}
+		</Field>
 	);
 }
 

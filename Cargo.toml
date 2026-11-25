@@ -14,7 +14,7 @@ homepage = "https://wanderer.singula.network"
 [workspace.dependencies]
 wanderer-tunnel = { path = "crates/tunnel" }
 wanderer-core = { path = "crates/core" }
-singula = { git = "https://github.com/SingulaTeam/rust-sdk", tag = "v0.2.2", features = ["client", "http"] }
+singula = { git = "https://github.com/SingulaTeam/rust-sdk", tag = "v0.2.3", features = ["client", "http"] }
 # To work against a local checkout of the SDK, uncomment this and keep the
 # line above unchanged:
 #

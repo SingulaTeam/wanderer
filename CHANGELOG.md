@@ -6,6 +6,35 @@ All notable changes to Wanderer are recorded here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- `url` 2.5.8 → 2.5.9 (RUSTSEC-2026-0592), through the SDK's HTTP client.
+- `cookie` 0.18.2 → 0.18.3 (RUSTSEC-2026-0594), through Tauri.
+
+### Added
+
+- A DNS setting, in the advanced mode: Cloudflare, Google, Quad9 or a
+  resolver of one's own, by address, over DNS-over-HTTPS (`https://`) or
+  plain DNS. Queries go through the tunnel either way; over plain DNS the
+  exit node sees each name, and the app says so. Cloudflare stays the
+  default.
+
+### Fixed
+
+- A connection of one hop to a country reaches that country's nodes wherever
+  they are connected. Wanderer asked the fastest Control Plane for a node in
+  the country, and a session on a right opens only at the Control Plane its
+  node is connected to, so a country whose nodes were on another Control
+  Plane was refused as having none. Wanderer now chooses the node and its
+  Control Plane together from every Control Plane's list, as it already did
+  for routes of several hops; the same goes for the node chosen after one
+  failed.
+- Falling back to another cover now reaches it. A node without a reverse
+  proxy serves each cover on a port of its own, and Wanderer tried every
+  cover on the port of the one the node chose, where the others are not
+  served. Each cover is tried on the port the node names for it (Singula Rust
+  SDK 0.2.3); a node that names none is tried on its chosen cover only.
+
 ## [0.5.0] - 2026-11-21
 
 ### Security

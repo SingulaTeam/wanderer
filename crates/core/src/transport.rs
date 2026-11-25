@@ -1,7 +1,9 @@
 //! Which way to reach a session's node, in which order.
 //!
-//! A node serves every cover over raw TCP with Vision and over xHTTP, on the
-//! same port, and the session works under any cover it serves. The user
+//! A node serves each cover over raw TCP with Vision and over xHTTP, on the
+//! cover's port — its own, or one shared by all behind a reverse proxy — and
+//! the session works under any cover it serves. A cover whose port the node
+//! does not name is not tried: an older node names only its choice's. The user
 //! picks Vision, xHTTP or Auto; Auto tries what worked last first, then
 //! Vision before xHTTP — Vision is faster where it is not blocked — on the
 //! cover the node chose, then the other covers.
@@ -11,7 +13,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use rand::seq::IndexedRandom as _;
 use serde::{Deserialize, Serialize};
 use singula::client::{Cover, TunnelSettings};
-use wanderer_tunnel::{Hop, Reality, Transport, TunnelPlan};
+use wanderer_tunnel::{Hop, Reality, Resolver, Transport, TunnelPlan};
 
 /// The transport the user chose in settings.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,8 +53,6 @@ impl From<&Transport> for Kind {
 pub struct Offer {
     /// The VLESS user id.
     pub uuid: String,
-    /// The REALITY port.
-    pub port: u16,
     /// Whether the node serves Vision over raw TCP.
     pub vision: bool,
     /// The node's REALITY public key.
@@ -72,6 +72,8 @@ pub struct CoverOffer {
     pub names: Vec<(String, String)>,
     /// Its xHTTP path, if served over xHTTP.
     pub xhttp_path: Option<String>,
+    /// The port it is reached on.
+    pub port: u16,
 }
 
 /// One way to try a node: a plan for the daemon, and the cover it uses.
@@ -90,22 +92,23 @@ const FALLBACK_FINGERPRINT: &str = "chrome";
 
 impl From<&TunnelSettings> for Offer {
     fn from(s: &TunnelSettings) -> Self {
-        let cover = |c: &Cover| CoverOffer {
+        let cover = |c: &Cover, port: u16| CoverOffer {
             preset: c.preset.clone(),
             names: c.names.clone(),
             xhttp_path: c.xhttp_path.clone(),
+            port,
         };
-        // The session's cover list may or may not repeat the chosen one.
-        let mut covers = vec![cover(&s.cover)];
+        // The session's cover list may or may not repeat the chosen one, and
+        // the chosen one is reached on the session's port.
+        let mut covers = vec![cover(&s.cover, s.cover.port.unwrap_or(s.port))];
         covers.extend(
             s.covers
                 .iter()
                 .filter(|c| c.preset != s.cover.preset)
-                .map(cover),
+                .filter_map(|c| Some(cover(c, c.port?))),
         );
         Self {
             uuid: s.uuid.clone(),
-            port: s.port,
             vision: s.flow == VISION_FLOW,
             public_key: s.reality_public_key.clone(),
             fingerprint: s.fingerprint.clone(),
@@ -130,9 +133,9 @@ impl Offer {
             kinds.reverse();
         }
 
-        let node = SocketAddrV4::new(node, self.port);
         let mut plans = Vec::new();
         for cover in &self.covers {
+            let node = SocketAddrV4::new(node, cover.port);
             for &kind in &kinds {
                 let transport = match (kind, &cover.xhttp_path) {
                     (Kind::Vision, _) if self.vision => Transport::Vision,
@@ -149,6 +152,7 @@ impl Offer {
                             transport,
                             onward: Vec::new(),
                             early_exits: Vec::new(),
+                            resolver: Resolver::default(),
                         },
                     });
                 }
@@ -162,9 +166,10 @@ impl Offer {
     /// shows on the wire and there is nothing to fall back between.
     #[must_use]
     pub fn hop(&self, node: Ipv4Addr) -> Option<Hop> {
-        let reality = self.reality(self.covers.first()?)?;
+        let cover = self.covers.first()?;
+        let reality = self.reality(cover)?;
         Some(Hop {
-            node: SocketAddrV4::new(node, self.port),
+            node: SocketAddrV4::new(node, cover.port),
             uuid: self.uuid.clone(),
             reality,
         })
@@ -193,7 +198,6 @@ impl std::fmt::Debug for Offer {
     // The uuid is the session's credential.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Offer")
-            .field("port", &self.port)
             .field("vision", &self.vision)
             .field("covers", &self.covers)
             .finish_non_exhaustive()
@@ -205,21 +209,21 @@ mod tests {
     use super::*;
 
     fn offer() -> Offer {
-        let cover = |preset: &str, path: Option<&str>| CoverOffer {
+        let cover = |preset: &str, path: Option<&str>, port| CoverOffer {
             preset: preset.into(),
             names: vec![(format!("{preset}.example"), "ab".into())],
             xhttp_path: path.map(Into::into),
+            port,
         };
         Offer {
             uuid: "7316e3b4-53eb-41da-90d9-23bbde8e1cc6".into(),
-            port: 443,
             vision: true,
             public_key: "Vfv6lG2gjLQSbkLJdcH72Eo7zW2LrNRhAyrvU_YPJGQ".into(),
             fingerprint: "chrome".into(),
             covers: vec![
-                cover("ru", Some("/a")),
-                cover("default", None),
-                cover("cn", Some("/c")),
+                cover("ru", Some("/a"), 8443),
+                cover("default", None, 443),
+                cover("cn", Some("/c"), 2053),
             ],
         }
     }
@@ -246,6 +250,11 @@ mod tests {
         assert_eq!(order(&plans), want.map(|(n, k)| (n.to_owned(), k)));
         assert!(plans.iter().all(|c| c.plan.validate().is_ok()));
         assert_eq!(plans[3].plan.reality.server_name, "cn.example");
+        assert_eq!(
+            plans.iter().map(|c| c.plan.node.port()).collect::<Vec<_>>(),
+            [8443, 8443, 443, 2053, 2053],
+            "each cover on its own port"
+        );
     }
 
     #[test]
